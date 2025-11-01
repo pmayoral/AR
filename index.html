@@ -185,26 +185,28 @@
             cursor: pointer;
         }
 
-        .video-item:hover .video-title::before {
-            content: attr(data-full-title);
-            position: fixed;
-            left: 50%;
-            top: 50%;
-            transform: translate(-50%, -50%);
-            background: #667eea;
-            color: #ffffff;
-            padding: 12px 20px;
-            border-radius: 8px;
-            white-space: normal;
-            max-width: 400px;
-            z-index: 10000;
-            font-size: 15px;
-            font-weight: 500;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
-            border: 2px solid #764ba2;
-            text-align: center;
-            line-height: 1.4;
-            pointer-events: none;
+        @media (hover: hover) and (pointer: fine) {
+            .video-item:hover .video-title::before {
+                content: attr(data-full-title);
+                position: fixed;
+                left: 50%;
+                top: 50%;
+                transform: translate(-50%, -50%);
+                background: #667eea;
+                color: #ffffff;
+                padding: 12px 20px;
+                border-radius: 8px;
+                white-space: normal;
+                max-width: 400px;
+                z-index: 10000;
+                font-size: 15px;
+                font-weight: 500;
+                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
+                border: 2px solid #764ba2;
+                text-align: center;
+                line-height: 1.4;
+                pointer-events: none;
+            }
         }
 
         .progress-bar-small {
@@ -324,7 +326,7 @@
             transition: all 0.3s;
             font-weight: bold;
             box-shadow: 2px 0 15px rgba(102, 126, 234, 0.5);
-            z-index: 1001;
+            z-index: 1002;
         }
 
         .toggle-sidebar-btn:hover {
@@ -432,6 +434,67 @@
             .player-area.sidebar-visible {
                 margin-left: 0;
             }
+            
+            .video-title {
+                white-space: normal;
+                overflow: visible;
+            }
+        }
+        
+        @media (max-width: 1024px) {
+            .sidebar {
+                width: 320px;
+            }
+            
+            .fullscreen-btn, .mark-watched-btn {
+                padding: 12px 16px;
+                font-size: 15px;
+                min-height: 44px;
+            }
+            
+            .video-item {
+                padding: 16px;
+                min-height: 60px;
+            }
+            
+            .season-header {
+                padding: 16px;
+                min-height: 50px;
+            }
+        }
+        
+        /* Mejoras para dispositivos táctiles */
+        @media (hover: none) and (pointer: coarse) {
+            .video-item:hover {
+                transform: none;
+            }
+            
+            .season-header:hover {
+                transform: none;
+            }
+            
+            .restart-btn {
+                opacity: 1;
+            }
+            
+            .toggle-sidebar-btn {
+                padding: 18px 14px;
+                min-width: 50px;
+                min-height: 60px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            
+            /* Evitar el rebote de scroll en iOS */
+            body {
+                overflow: hidden;
+                -webkit-overflow-scrolling: touch;
+            }
+            
+            .sidebar {
+                -webkit-overflow-scrolling: touch;
+            }
         }
     </style>
 </head>
@@ -466,7 +529,7 @@
                 <div class="loading-message" id="emptyMessage">
                     Selecciona un episodio para comenzar
                 </div>
-                <video id="videoPlayer" controls style="display: none;"></video>
+                <video id="videoPlayer" controls playsinline webkit-playsinline style="display: none;"></video>
                 <div class="loading-text" id="loadingText" style="display: none;">Cargando: 0.0 MB</div>
             </div>
         </div>
@@ -979,7 +1042,15 @@
                 restoreSavedProgress(video);
                 elements.videoPlayer.play();
                 updateActiveVideoItem();
-                setSidebarVisibility(false);
+                
+                // En dispositivos táctiles, cerrar el sidebar al reproducir
+                const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+                if (isTouchDevice && !window.sidebarPinned) {
+                    elements.sidebar.style.transform = 'translateX(-100%)';
+                    elements.playerArea.classList.remove('sidebar-visible');
+                } else {
+                    setSidebarVisibility(false);
+                }
                 
             } catch (error) {
                 elements.loadingText.style.display = 'none';
@@ -1030,7 +1101,7 @@
         // ==================== SIDEBAR ====================
         function toggleSidebar() {
             const currentTransform = elements.sidebar.style.transform;
-            const isHidden = currentTransform === 'translateX(-100%)';
+            const isHidden = currentTransform === 'translateX(-100%)' || currentTransform === '';
             elements.sidebar.style.transform = isHidden ? 'translateX(0)' : 'translateX(-100%)';
             
             if (!window.sidebarPinned) {
@@ -1059,6 +1130,10 @@
         window.togglePin = togglePin;
         
         function setupSidebarHover() {
+            // Solo activar hover en dispositivos no táctiles
+            const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+            if (isTouchDevice) return;
+            
             const showSidebar = () => setSidebarVisibility(true);
             const hideSidebarDelayed = () => {
                 if (!window.sidebarPinned) {
@@ -1078,13 +1153,25 @@
 
         // ==================== PANTALLA COMPLETA ====================
         function toggleFullscreen() {
-            if (!document.fullscreenElement) {
-                if (elements.playerArea.requestFullscreen) {
+            const elem = elements.videoPlayer;
+            
+            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+                // Intentar diferentes APIs de pantalla completa
+                if (elem.requestFullscreen) {
+                    elem.requestFullscreen();
+                } else if (elem.webkitRequestFullscreen) {
+                    elem.webkitRequestFullscreen();
+                } else if (elem.webkitEnterFullscreen) {
+                    // Específico para iOS
+                    elem.webkitEnterFullscreen();
+                } else if (elements.playerArea.requestFullscreen) {
                     elements.playerArea.requestFullscreen();
                 }
             } else {
                 if (document.exitFullscreen) {
                     document.exitFullscreen();
+                } else if (document.webkitExitFullscreen) {
+                    document.webkitExitFullscreen();
                 }
             }
         }
@@ -1100,7 +1187,14 @@
             
             window.sidebarPinned = false;
             window.videoFullyLoaded = false;
-            elements.sidebar.style.transform = 'translateX(-100%)';
+            
+            // En dispositivos táctiles, mostrar el sidebar inicialmente
+            const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+            if (isTouchDevice) {
+                elements.sidebar.style.transform = 'translateX(0)';
+            } else {
+                elements.sidebar.style.transform = 'translateX(-100%)';
+            }
         }
 
         initialize();
