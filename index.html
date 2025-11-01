@@ -232,6 +232,28 @@
             font-size: 20px;
         }
 
+        .restart-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 11px;
+            transition: all 0.2s;
+            margin-left: 8px;
+            opacity: 0;
+        }
+
+        .video-item:hover .restart-btn {
+            opacity: 1;
+        }
+
+        .restart-btn:hover {
+            background: #667eea;
+            border-color: #764ba2;
+        }
+
         .player-area {
             flex: 1;
             display: flex;
@@ -342,6 +364,7 @@
             align-items: center;
             justify-content: center;
             background: #000;
+            position: relative;
         }
 
         video {
@@ -356,6 +379,28 @@
             text-align: center;
             font-size: 16px;
             color: #64748b;
+        }
+
+        video::-webkit-media-controls-timeline {
+            background: linear-gradient(to right, 
+                #10b981 var(--buffered-progress, 0%), 
+                #2a2a2a var(--buffered-progress, 0%));
+        }
+
+        .loading-text {
+            position: absolute;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            color: #10b981;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            z-index: 101;
+            white-space: nowrap;
+            font-weight: 500;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
         }
 
         .empty-state {
@@ -418,10 +463,11 @@
                 </div>
             </div>
             <div class="player-container">
-                <div class="loading-message" id="loadingMessage">
+                <div class="loading-message" id="emptyMessage">
                     Selecciona un episodio para comenzar
                 </div>
                 <video id="videoPlayer" controls style="display: none;"></video>
+                <div class="loading-text" id="loadingText" style="display: none;">Cargando: 0.0 MB</div>
             </div>
         </div>
         
@@ -451,7 +497,8 @@
             statusText: null,
             seasonsList: null,
             playerTitle: null,
-            loadingMessage: null,
+            loadingText: null,
+            emptyMessage: null,
             markWatchedBtn: null,
             pinBtn: null,
             toggleBtn: null
@@ -464,7 +511,8 @@
             elements.statusText = document.getElementById('statusText');
             elements.seasonsList = document.getElementById('seasonsList');
             elements.playerTitle = document.getElementById('playerTitle');
-            elements.loadingMessage = document.getElementById('loadingMessage');
+            elements.loadingText = document.getElementById('loadingText');
+            elements.emptyMessage = document.getElementById('emptyMessage');
             elements.markWatchedBtn = document.getElementById('markWatchedBtn');
             elements.pinBtn = document.getElementById('pinBtn');
             elements.toggleBtn = document.querySelector('.toggle-sidebar-btn');
@@ -474,11 +522,7 @@
         function setSidebarVisibility(visible) {
             if (!window.sidebarPinned) {
                 elements.sidebar.style.transform = visible ? 'translateX(0)' : 'translateX(-100%)';
-                if (visible) {
-                    elements.playerArea.classList.add('sidebar-visible');
-                } else {
-                    elements.playerArea.classList.remove('sidebar-visible');
-                }
+                elements.playerArea.classList.toggle('sidebar-visible', visible);
             }
         }
 
@@ -495,6 +539,17 @@
                     ${submessageHtml}
                 </div>
             `;
+        }
+
+        function formatTime(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = Math.floor(seconds % 60);
+            
+            if (h > 0) {
+                return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+            }
+            return `${m}:${s.toString().padStart(2, '0')}`;
         }
 
         // ==================== GOOGLE DRIVE API ====================
@@ -546,17 +601,71 @@
         // ==================== ALMACENAMIENTO ====================
         function loadProgress() {
             const saved = localStorage.getItem(STORAGE_KEY);
-            if (saved) {
-                try {
-                    progressData = JSON.parse(saved);
-                } catch (e) {
-                    progressData = {};
+            if (!saved) return;
+
+            try {
+                const loaded = JSON.parse(saved);
+                progressData = {};
+                
+                for (const [key, value] of Object.entries(loaded)) {
+                    if (typeof value === 'number') {
+                        progressData[key] = { currentTime: value * 100, duration: 0 };
+                    } else if (value && typeof value === 'object') {
+                        if ('currentTime' in value && 'duration' in value) {
+                            progressData[key] = value;
+                        } else if ('progress' in value && 'duration' in value) {
+                            const time = value.progress * value.duration;
+                            progressData[key] = { currentTime: time, duration: value.duration };
+                        }
+                    }
                 }
+                
+                saveProgress();
+            } catch (e) {
+                progressData = {};
             }
         }
 
         function saveProgress() {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(progressData));
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(progressData));
+            } catch (e) {
+                // Error silencioso
+            }
+        }
+
+        function getVideoProgress(videoId) {
+            const videoProgress = progressData[videoId];
+            const currentTime = videoProgress?.currentTime || 0;
+            let duration = videoProgress?.duration || 0;
+            
+            if (currentVideo && currentVideo.id === videoId && elements.videoPlayer.duration > 0 && window.videoFullyLoaded) {
+                duration = elements.videoPlayer.duration;
+                if (videoProgress && duration !== videoProgress.duration) {
+                    saveVideoProgress(videoId, currentTime, duration);
+                }
+            }
+            
+            return {
+                currentTime: currentTime,
+                duration: duration,
+                progress: duration > 0 ? currentTime / duration : 0
+            };
+        }
+
+        function saveVideoProgress(videoId, currentTime, duration) {
+            if (!window.videoFullyLoaded) {
+                const existing = progressData[videoId];
+                if (existing && existing.duration > 0) {
+                    progressData[videoId] = { currentTime, duration: existing.duration };
+                } else {
+                    progressData[videoId] = { currentTime, duration: 0 };
+                }
+                saveProgress();
+            } else if (duration > 0) {
+                progressData[videoId] = { currentTime, duration };
+                saveProgress();
+            }
         }
 
         // ==================== PARSEO Y ORGANIZACIÓN ====================
@@ -577,25 +686,25 @@
             
             files.forEach(file => {
                 const parsed = parseFileName(file.name);
-                if (parsed) {
-                    const seasonNum = parsed.season;
-                    
-                    if (!seasons[seasonNum]) {
-                        seasons[seasonNum] = {
-                            name: `Temporada ${seasonNum}`,
-                            videos: []
-                        };
-                    }
-                    
-                    seasons[seasonNum].videos.push({
-                        id: `s${parsed.season}e${parsed.episode}`,
-                        title: parsed.originalName.replace(/\.[^/.]+$/, ''),
-                        fullName: parsed.originalName,
-                        episode: parsed.episode,
-                        fileId: file.id,
-                        url: `https://drive.google.com/file/d/${file.id}/preview?quality=high`
-                    });
+                if (!parsed) return;
+
+                const seasonNum = parsed.season;
+                
+                if (!seasons[seasonNum]) {
+                    seasons[seasonNum] = {
+                        name: `Temporada ${seasonNum}`,
+                        videos: []
+                    };
                 }
+                
+                seasons[seasonNum].videos.push({
+                    id: `s${parsed.season}e${parsed.episode}`,
+                    title: parsed.originalName.replace(/\.[^/.]+$/, ''),
+                    fullName: parsed.originalName,
+                    episode: parsed.episode,
+                    fileId: file.id,
+                    url: `https://drive.google.com/file/d/${file.id}/preview?quality=high`
+                });
             });
             
             Object.values(seasons).forEach(season => {
@@ -607,23 +716,48 @@
                 .map(key => seasons[key]);
         }
 
-        // ==================== UI ====================
+        // ==================== UI - CREACIÓN DE ELEMENTOS ====================
+        function buildVideoTooltip(video, currentTime, duration) {
+            let tooltipText = video.fullName;
+            const progress = duration > 0 ? currentTime / duration : 0;
+            
+            if (progress >= WATCHED_THRESHOLD) {
+                tooltipText = `${video.fullName} (completado)`;
+            } else if (currentTime > 0 && duration > 0) {
+                tooltipText = `${video.fullName} (en ${formatTime(currentTime)})`;
+            }
+            
+            return tooltipText;
+        }
+
         function createVideoItem(video) {
-            const progress = progressData[video.id] || 0;
+            const { currentTime, duration, progress } = getVideoProgress(video.id);
             const isWatched = progress >= WATCHED_THRESHOLD;
+            const tooltipText = buildVideoTooltip(video, currentTime, duration);
             
             const videoItem = document.createElement('div');
             videoItem.className = `video-item ${isWatched ? 'watched' : ''}`;
             videoItem.innerHTML = `
                 <div class="video-info">
-                    <div class="video-title" data-full-title="${video.fullName}">${video.title}</div>
+                    <div class="video-title" data-full-title="${tooltipText}">${video.title}</div>
                     <div class="progress-bar-small">
                         <div class="progress-fill-small ${isWatched ? 'watched' : ''}" 
                              style="width: ${progress * 100}%"></div>
                     </div>
                 </div>
-                <div class="video-status">${isWatched ? '✓' : ''}</div>
+                <div style="display: flex; align-items: center;">
+                    ${currentTime > 0 ? '<button class="restart-btn" title="Ver desde el principio">🔄</button>' : ''}
+                    <div class="video-status">${isWatched ? '✓' : ''}</div>
+                </div>
             `;
+            
+            const restartBtn = videoItem.querySelector('.restart-btn');
+            if (restartBtn) {
+                restartBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    restartVideo(video, videoItem);
+                };
+            }
             
             videoItem.onclick = () => playVideo(video);
             return videoItem;
@@ -686,14 +820,119 @@
             }
         }
 
+        // ==================== UI - ACTUALIZACIÓN ====================
+        function updateActiveVideoItem() {
+            document.querySelectorAll('.video-item').forEach(item => {
+                item.classList.remove('active');
+                if (currentVideo && item.querySelector('.video-title').textContent === currentVideo.title) {
+                    item.classList.add('active');
+                }
+            });
+        }
+
+        function updateVideoItemUI(video, currentTime, duration, markWatched = false) {
+            const progress = duration > 0 ? currentTime / duration : 0;
+            
+            document.querySelectorAll('.video-item').forEach(item => {
+                const titleElement = item.querySelector('.video-title');
+                
+                if (currentVideo && titleElement.textContent === currentVideo.title) {
+                    const progressBar = item.querySelector('.progress-fill-small');
+                    progressBar.style.width = `${progress * 100}%`;
+                    
+                    if (duration > 0) {
+                        const tooltipText = buildVideoTooltip(video, currentTime, duration);
+                        titleElement.setAttribute('data-full-title', tooltipText);
+                    }
+                    
+                    if (markWatched) {
+                        item.classList.add('watched');
+                        progressBar.classList.add('watched');
+                        item.querySelector('.video-status').textContent = '✓';
+                    }
+                    
+                    const statusContainer = item.querySelector('.video-status').parentElement;
+                    const existingRestartBtn = statusContainer.querySelector('.restart-btn');
+                    
+                    if (currentTime > 0 && !existingRestartBtn) {
+                        const restartBtn = document.createElement('button');
+                        restartBtn.className = 'restart-btn';
+                        restartBtn.title = 'Ver desde el principio';
+                        restartBtn.textContent = '🔄';
+                        restartBtn.onclick = (e) => {
+                            e.stopPropagation();
+                            restartVideo(currentVideo, item);
+                        };
+                        statusContainer.insertBefore(restartBtn, statusContainer.firstChild);
+                    }
+                }
+            });
+        }
+
+        // ==================== REINICIAR VIDEO ====================
+        function restartVideo(video, videoItem) {
+            delete progressData[video.id];
+            saveProgress();
+            
+            const progressBar = videoItem.querySelector('.progress-fill-small');
+            progressBar.style.width = '0%';
+            progressBar.classList.remove('watched');
+            
+            videoItem.classList.remove('watched');
+            videoItem.querySelector('.video-status').textContent = '';
+            
+            const titleElement = videoItem.querySelector('.video-title');
+            titleElement.setAttribute('data-full-title', video.fullName);
+            
+            const restartBtn = videoItem.querySelector('.restart-btn');
+            if (restartBtn) {
+                restartBtn.remove();
+            }
+            
+            if (currentVideo && currentVideo.id === video.id) {
+                elements.videoPlayer.currentTime = 0;
+            }
+        }
+
         // ==================== REPRODUCCIÓN ====================
+        function getCurrentProgress() {
+            if (!currentVideo || !elements.videoPlayer.duration) return null;
+            
+            return {
+                videoId: currentVideo.id,
+                currentTime: elements.videoPlayer.currentTime,
+                duration: elements.videoPlayer.duration
+            };
+        }
+
+        function saveCurrentProgress() {
+            const progressInfo = getCurrentProgress();
+            if (progressInfo) {
+                saveVideoProgress(progressInfo.videoId, progressInfo.currentTime, progressInfo.duration);
+            }
+        }
+
+        function restoreSavedProgress(video) {
+            const { currentTime, duration, progress } = getVideoProgress(video.id);
+            
+            if (currentTime > 0 && progress < WATCHED_THRESHOLD) {
+                elements.videoPlayer.addEventListener('loadedmetadata', () => {
+                    elements.videoPlayer.currentTime = currentTime;
+                }, { once: true });
+            }
+        }
+
         async function playVideo(video) {
+            saveCurrentProgress();
+            
             currentVideo = video;
+            window.videoFullyLoaded = false;
             
             elements.playerTitle.textContent = video.title;
-            elements.loadingMessage.textContent = 'Cargando buffer inicial...';
-            elements.loadingMessage.style.display = 'block';
+            elements.emptyMessage.style.display = 'none';
             elements.videoPlayer.style.display = 'none';
+            elements.loadingText.style.display = 'block';
+            elements.loadingText.textContent = 'Descargando: 0%';
             
             try {
                 const downloadUrl = `https://www.googleapis.com/drive/v3/files/${video.fileId}?alt=media&key=${API_KEY}`;
@@ -706,7 +945,6 @@
                 const contentLength = response.headers.get('content-length');
                 const total = parseInt(contentLength, 10);
                 let loaded = 0;
-                let hasStartedPlaying = false;
                 
                 const reader = response.body.getReader();
                 const chunks = [];
@@ -715,109 +953,78 @@
                     const { done, value } = await reader.read();
                     
                     if (done) {
-                        const blob = new Blob(chunks);
-                        const videoUrl = URL.createObjectURL(blob);
-                        elements.videoPlayer.src = videoUrl;
                         break;
                     }
                     
                     chunks.push(value);
                     loaded += value.length;
                     
-                    if (!hasStartedPlaying && loaded >= START_BUFFER) {
-                        hasStartedPlaying = true;
-                        
-                        const partialBlob = new Blob(chunks);
-                        const videoUrl = URL.createObjectURL(partialBlob);
-                        
-                        elements.videoPlayer.src = videoUrl;
-                        elements.videoPlayer.style.display = 'block';
-                        elements.loadingMessage.style.display = 'none';
-                        elements.markWatchedBtn.style.display = 'inline-block';
-                        
-                        const savedProgress = progressData[video.id] || 0;
-                        if (savedProgress > 0 && savedProgress < WATCHED_THRESHOLD) {
-                            elements.videoPlayer.addEventListener('loadedmetadata', () => {
-                                elements.videoPlayer.currentTime = elements.videoPlayer.duration * savedProgress;
-                            }, { once: true });
-                        }
-                        
-                        elements.videoPlayer.play();
-                        updateActiveVideoItem();
-                        setSidebarVisibility(false);
-                    } else if (!hasStartedPlaying) {
-                        const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
-                        const mbNeeded = (START_BUFFER / (1024 * 1024)).toFixed(1);
-                        elements.loadingMessage.textContent = `Cargando buffer: ${mbLoaded} / ${mbNeeded} MB`;
-                    }
+                    const percent = Math.floor((loaded / total) * 100);
+                    const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
+                    const mbTotal = (total / (1024 * 1024)).toFixed(1);
+                    
+                    elements.loadingText.textContent = `Descargando: ${percent}% (${mbLoaded} / ${mbTotal} MB)`;
                 }
                 
+                const blob = new Blob(chunks);
+                const videoUrl = URL.createObjectURL(blob);
+                
+                elements.videoPlayer.src = videoUrl;
+                elements.videoPlayer.style.display = 'block';
+                elements.markWatchedBtn.style.display = 'inline-block';
+                elements.loadingText.style.display = 'none';
+                
+                window.videoFullyLoaded = true;
+                
+                restoreSavedProgress(video);
+                elements.videoPlayer.play();
+                updateActiveVideoItem();
+                setSidebarVisibility(false);
+                
             } catch (error) {
-                elements.loadingMessage.textContent = 'Error al cargar el video. Verifica la conexión.';
-                elements.loadingMessage.style.display = 'block';
+                elements.loadingText.style.display = 'none';
+                elements.emptyMessage.style.display = 'block';
+                elements.emptyMessage.textContent = 'Error al cargar el video. Verifica la conexión.';
             }
         }
         
         function markCurrentAsWatched() {
-            if (currentVideo) {
-                progressData[currentVideo.id] = 1.0;
-                saveProgress();
-                updateVideoItemUI(currentVideo, 1.0, true);
+            if (currentVideo && elements.videoPlayer.duration > 0) {
+                saveVideoProgress(currentVideo.id, elements.videoPlayer.duration, elements.videoPlayer.duration);
+                updateVideoItemUI(currentVideo, elements.videoPlayer.duration, elements.videoPlayer.duration, true);
             }
         }
         window.markCurrentAsWatched = markCurrentAsWatched;
 
-        function updateActiveVideoItem() {
-            document.querySelectorAll('.video-item').forEach(item => {
-                item.classList.remove('active');
-                if (currentVideo && item.querySelector('.video-title').textContent === currentVideo.title) {
-                    item.classList.add('active');
-                }
-            });
-        }
-
-        function updateVideoItemUI(video, progress, markWatched = false) {
-            document.querySelectorAll('.video-item').forEach(item => {
-                const titleElement = item.querySelector('.video-title');
-                
-                if (currentVideo && titleElement.textContent === currentVideo.title) {
-                    const progressBar = item.querySelector('.progress-fill-small');
-                    progressBar.style.width = `${progress * 100}%`;
-                    
-                    if (markWatched) {
-                        item.classList.add('watched');
-                        progressBar.classList.add('watched');
-                        item.querySelector('.video-status').textContent = '✓';
-                    }
-                }
-            });
-        }
-
         // ==================== TRACKING DE PROGRESO ====================
         function setupProgressTracking() {
             elements.videoPlayer.addEventListener('timeupdate', () => {
-                if (currentVideo && elements.videoPlayer.duration > 0) {
-                    const progress = elements.videoPlayer.currentTime / elements.videoPlayer.duration;
-                    progressData[currentVideo.id] = progress;
-                    
-                    if (Math.floor(elements.videoPlayer.currentTime) % 5 === 0) {
-                        saveProgress();
-                        updateVideoItemUI(currentVideo, progress);
-                    }
-                    
-                    if (progress >= WATCHED_THRESHOLD) {
-                        updateVideoItemUI(currentVideo, progress, true);
-                        saveProgress();
-                    }
+                const progressInfo = getCurrentProgress();
+                if (!progressInfo) return;
+
+                const progress = progressInfo.currentTime / progressInfo.duration;
+                
+                if (Math.floor(elements.videoPlayer.currentTime) % 5 === 0) {
+                    saveVideoProgress(progressInfo.videoId, progressInfo.currentTime, progressInfo.duration);
+                    updateVideoItemUI(currentVideo, progressInfo.currentTime, progressInfo.duration);
+                }
+                
+                if (progress >= WATCHED_THRESHOLD) {
+                    saveVideoProgress(progressInfo.videoId, progressInfo.currentTime, progressInfo.duration);
+                    updateVideoItemUI(currentVideo, progressInfo.currentTime, progressInfo.duration, true);
                 }
             });
 
-            window.addEventListener('beforeunload', () => {
+            elements.videoPlayer.addEventListener('pause', saveCurrentProgress);
+            
+            elements.videoPlayer.addEventListener('ended', () => {
                 if (currentVideo && elements.videoPlayer.duration > 0) {
-                    progressData[currentVideo.id] = elements.videoPlayer.currentTime / elements.videoPlayer.duration;
-                    saveProgress();
+                    saveVideoProgress(currentVideo.id, elements.videoPlayer.duration, elements.videoPlayer.duration);
+                    updateVideoItemUI(currentVideo, elements.videoPlayer.duration, elements.videoPlayer.duration, true);
                 }
             });
+
+            window.addEventListener('beforeunload', saveCurrentProgress);
         }
 
         // ==================== SIDEBAR ====================
@@ -827,11 +1034,7 @@
             elements.sidebar.style.transform = isHidden ? 'translateX(0)' : 'translateX(-100%)';
             
             if (!window.sidebarPinned) {
-                if (isHidden) {
-                    elements.playerArea.classList.add('sidebar-visible');
-                } else {
-                    elements.playerArea.classList.remove('sidebar-visible');
-                }
+                elements.playerArea.classList.toggle('sidebar-visible', isHidden);
             }
         }
         window.toggleSidebar = toggleSidebar;
@@ -856,15 +1059,8 @@
         window.togglePin = togglePin;
         
         function setupSidebarHover() {
-            elements.toggleBtn.addEventListener('mouseenter', () => {
-                setSidebarVisibility(true);
-            });
-            
-            elements.sidebar.addEventListener('mouseenter', () => {
-                setSidebarVisibility(true);
-            });
-            
-            elements.sidebar.addEventListener('mouseleave', () => {
+            const showSidebar = () => setSidebarVisibility(true);
+            const hideSidebarDelayed = () => {
                 if (!window.sidebarPinned) {
                     setTimeout(() => {
                         if (!elements.sidebar.matches(':hover') && !elements.toggleBtn.matches(':hover')) {
@@ -872,17 +1068,12 @@
                         }
                     }, 100);
                 }
-            });
-            
-            elements.toggleBtn.addEventListener('mouseleave', () => {
-                if (!window.sidebarPinned) {
-                    setTimeout(() => {
-                        if (!elements.sidebar.matches(':hover') && !elements.toggleBtn.matches(':hover')) {
-                            setSidebarVisibility(false);
-                        }
-                    }, 100);
-                }
-            });
+            };
+
+            elements.toggleBtn.addEventListener('mouseenter', showSidebar);
+            elements.sidebar.addEventListener('mouseenter', showSidebar);
+            elements.sidebar.addEventListener('mouseleave', hideSidebarDelayed);
+            elements.toggleBtn.addEventListener('mouseleave', hideSidebarDelayed);
         }
 
         // ==================== PANTALLA COMPLETA ====================
@@ -908,6 +1099,7 @@
             loadFilesFromDrive();
             
             window.sidebarPinned = false;
+            window.videoFullyLoaded = false;
             elements.sidebar.style.transform = 'translateX(-100%)';
         }
 
