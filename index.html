@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -30,6 +29,12 @@
             background: #1a1a1a;
             overflow-y: auto;
             border-right: 2px solid #2a2a2a;
+            transition: transform 0.3s ease;
+            position: fixed;
+            left: 0;
+            top: 0;
+            height: 100vh;
+            z-index: 1000;
         }
 
         .sidebar::-webkit-scrollbar {
@@ -232,6 +237,12 @@
             display: flex;
             flex-direction: column;
             background: #000;
+            width: 100%;
+            transition: margin-left 0.3s ease;
+        }
+        
+        .player-area.sidebar-visible {
+            margin-left: 350px;
         }
 
         .player-header {
@@ -245,8 +256,8 @@
 
         .player-title {
             font-size: 18px;
-            flex: 1;
             text-align: center;
+            flex: 1;
             color: #e2e8f0;
             font-weight: 500;
         }
@@ -275,6 +286,55 @@
         .mark-watched-btn:hover {
             background: #047857;
         }
+
+        .toggle-sidebar-btn {
+            position: fixed;
+            left: 0;
+            top: 20px;
+            background: #667eea;
+            border: 2px solid #764ba2;
+            border-left: none;
+            color: white;
+            padding: 20px 12px;
+            border-radius: 0 8px 8px 0;
+            cursor: pointer;
+            font-size: 24px;
+            transition: all 0.3s;
+            font-weight: bold;
+            box-shadow: 2px 0 15px rgba(102, 126, 234, 0.5);
+            z-index: 1001;
+        }
+
+        .toggle-sidebar-btn:hover {
+            background: #764ba2;
+            padding-right: 20px;
+            box-shadow: 2px 0 20px rgba(118, 75, 162, 0.7);
+        }
+
+        .pin-sidebar-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.2s;
+            z-index: 20;
+        }
+
+        .pin-sidebar-btn:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .pin-sidebar-btn.pinned {
+            background: #667eea;
+            border-color: #764ba2;
+        }
+
 
         .player-container {
             flex: 1;
@@ -314,12 +374,26 @@
             .sidebar {
                 width: 100%;
             }
+            
+            .player-title {
+                font-size: 15px;
+            }
+            
+            .toggle-sidebar-btn {
+                font-size: 20px;
+                padding: 15px 10px;
+            }
+            
+            .player-area.sidebar-visible {
+                margin-left: 0;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="sidebar">
+        <div class="sidebar" id="sidebar">
+            <button class="pin-sidebar-btn" onclick="togglePin()" id="pinBtn" title="Fijar/Desfijar panel">📌</button>
             <div class="sidebar-header">
                 <h1>🔍 Agatha Raisin</h1>
                 <div class="status">
@@ -350,14 +424,13 @@
                 <video id="videoPlayer" controls style="display: none;"></video>
             </div>
         </div>
+        
+        <button class="toggle-sidebar-btn" onclick="toggleSidebar()">☰</button>
     </div>
 
     <script>
         // ==================== CONFIGURACIÓN ====================
-        // ID de la carpeta de Google Drive (lo obtienes de la URL)
         const FOLDER_ID = '1rjt-lXaUE2JscuvpkgiSokDnpnSjIiaa';
-        
-        // API Key de Google Drive
         const API_KEY = 'AIzaSyCFAswsjv7uZq7R61ygWuC-Q2wh4gnj3XU';
         
         let DRIVE_FILES = [];
@@ -367,34 +440,76 @@
         let progressData = {};
         const WATCHED_THRESHOLD = 0.95;
         const STORAGE_KEY = 'agatha_raisin_progress';
+        const START_BUFFER = 5 * 1024 * 1024;
+        const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.m4v'];
+
+        // ==================== CACHE DE ELEMENTOS DOM ====================
+        const elements = {
+            sidebar: null,
+            playerArea: null,
+            videoPlayer: null,
+            statusText: null,
+            seasonsList: null,
+            playerTitle: null,
+            loadingMessage: null,
+            markWatchedBtn: null,
+            pinBtn: null,
+            toggleBtn: null
+        };
+
+        function initializeElements() {
+            elements.sidebar = document.getElementById('sidebar');
+            elements.playerArea = document.getElementById('playerArea');
+            elements.videoPlayer = document.getElementById('videoPlayer');
+            elements.statusText = document.getElementById('statusText');
+            elements.seasonsList = document.getElementById('seasonsList');
+            elements.playerTitle = document.getElementById('playerTitle');
+            elements.loadingMessage = document.getElementById('loadingMessage');
+            elements.markWatchedBtn = document.getElementById('markWatchedBtn');
+            elements.pinBtn = document.getElementById('pinBtn');
+            elements.toggleBtn = document.querySelector('.toggle-sidebar-btn');
+        }
+
+        // ==================== UTILIDADES ====================
+        function setSidebarVisibility(visible) {
+            if (!window.sidebarPinned) {
+                elements.sidebar.style.transform = visible ? 'translateX(0)' : 'translateX(-100%)';
+                if (visible) {
+                    elements.playerArea.classList.add('sidebar-visible');
+                } else {
+                    elements.playerArea.classList.remove('sidebar-visible');
+                }
+            }
+        }
+
+        function updateStatus(text) {
+            elements.statusText.textContent = text;
+        }
+
+        function showEmptyState(icon, message, submessage = '') {
+            const submessageHtml = submessage ? `<p style="font-size: 13px; margin-top: 10px;">${submessage}</p>` : '';
+            elements.seasonsList.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon">${icon}</div>
+                    <p style="color: #ef4444;">${message}</p>
+                    ${submessageHtml}
+                </div>
+            `;
+        }
 
         // ==================== GOOGLE DRIVE API ====================
         async function loadFilesFromDrive() {
             if (API_KEY === 'TU_API_KEY_AQUI') {
-                console.error('⚠️ Necesitas configurar tu API Key de Google Drive');
-                document.getElementById('statusText').textContent = 'Error: Falta API Key';
-                document.getElementById('seasonsList').innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">🔑</div>
-                        <p style="color: #ef4444;">Necesitas configurar la API Key</p>
-                        <p style="font-size: 13px; margin-top: 10px;">
-                            Ve a <a href="https://console.cloud.google.com" target="_blank" style="color: #667eea;">Google Cloud Console</a>
-                            para crear una API Key
-                        </p>
-                    </div>
-                `;
+                updateStatus('Error: Falta API Key');
+                showEmptyState('🔑', 'Necesitas configurar la API Key', 
+                    'Ve a <a href="https://console.cloud.google.com" target="_blank" style="color: #667eea;">Google Cloud Console</a> para crear una API Key');
                 return;
             }
 
             try {
-                document.getElementById('statusText').textContent = 'Cargando archivos...';
+                updateStatus('Cargando archivos...');
                 
-                // Consultar archivos de la carpeta usando Google Drive API v3
-                const url = `https://www.googleapis.com/drive/v3/files?` +
-                    `q='${FOLDER_ID}'+in+parents` +
-                    `&key=${API_KEY}` +
-                    `&fields=files(id,name,mimeType)`;
-                
+                const url = `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents&key=${API_KEY}&fields=files(id,name,mimeType)`;
                 const response = await fetch(url);
                 
                 if (!response.ok) {
@@ -407,39 +522,28 @@
                     throw new Error('No se encontraron archivos en la carpeta');
                 }
                 
-                // Filtrar solo archivos de video
-                const videoExtensions = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.m4v'];
                 DRIVE_FILES = data.files
                     .filter(file => {
                         const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-                        return videoExtensions.includes(ext);
+                        return VIDEO_EXTENSIONS.includes(ext);
                     })
                     .map(file => ({
                         id: file.id,
                         name: file.name
                     }));
                 
-                console.log(`✅ ${DRIVE_FILES.length} videos encontrados`);
-                document.getElementById('statusText').textContent = `${DRIVE_FILES.length} episodios`;
+                updateStatus(`${DRIVE_FILES.length} episodios`);
                 
-                // Renderizar temporadas
                 const seasons = organizeBySeasons(DRIVE_FILES);
                 renderSeasons(seasons);
                 
             } catch (error) {
-                console.error('Error al cargar archivos:', error);
-                document.getElementById('statusText').textContent = 'Error de conexión';
-                document.getElementById('seasonsList').innerHTML = `
-                    <div class="empty-state">
-                        <div class="empty-state-icon">⚠️</div>
-                        <p style="color: #ef4444;">Error al cargar archivos</p>
-                        <p style="font-size: 13px; margin-top: 10px;">${error.message}</p>
-                    </div>
-                `;
+                updateStatus('Error de conexión');
+                showEmptyState('⚠️', 'Error al cargar archivos', error.message);
             }
         }
 
-        // ==================== FUNCIONES DE ALMACENAMIENTO ====================
+        // ==================== ALMACENAMIENTO ====================
         function loadProgress() {
             const saved = localStorage.getItem(STORAGE_KEY);
             if (saved) {
@@ -489,7 +593,6 @@
                         fullName: parsed.originalName,
                         episode: parsed.episode,
                         fileId: file.id,
-                        // Usar URL con máxima calidad (1080p si está disponible)
                         url: `https://drive.google.com/file/d/${file.id}/preview?quality=high`
                     });
                 }
@@ -505,12 +608,61 @@
         }
 
         // ==================== UI ====================
+        function createVideoItem(video) {
+            const progress = progressData[video.id] || 0;
+            const isWatched = progress >= WATCHED_THRESHOLD;
+            
+            const videoItem = document.createElement('div');
+            videoItem.className = `video-item ${isWatched ? 'watched' : ''}`;
+            videoItem.innerHTML = `
+                <div class="video-info">
+                    <div class="video-title" data-full-title="${video.fullName}">${video.title}</div>
+                    <div class="progress-bar-small">
+                        <div class="progress-fill-small ${isWatched ? 'watched' : ''}" 
+                             style="width: ${progress * 100}%"></div>
+                    </div>
+                </div>
+                <div class="video-status">${isWatched ? '✓' : ''}</div>
+            `;
+            
+            videoItem.onclick = () => playVideo(video);
+            return videoItem;
+        }
+
+        function createSeasonElement(season) {
+            const seasonDiv = document.createElement('div');
+            seasonDiv.className = 'season';
+            
+            const seasonHeader = document.createElement('div');
+            seasonHeader.className = 'season-header';
+            seasonHeader.innerHTML = `
+                <span class="season-name">${season.name}</span>
+                <span class="season-toggle">▶</span>
+            `;
+            
+            const videosList = document.createElement('div');
+            videosList.className = 'videos-list';
+            
+            season.videos.forEach(video => {
+                videosList.appendChild(createVideoItem(video));
+            });
+            
+            seasonHeader.onclick = () => {
+                const toggle = seasonHeader.querySelector('.season-toggle');
+                toggle.classList.toggle('open');
+                videosList.classList.toggle('open');
+            };
+            
+            seasonDiv.appendChild(seasonHeader);
+            seasonDiv.appendChild(videosList);
+            return seasonDiv;
+        }
+
         function renderSeasons(seasons) {
-            const seasonsList = document.getElementById('seasonsList');
-            seasonsList.innerHTML = '';
+            elements.seasonsList.innerHTML = '';
 
             if (seasons.length === 0) {
-                seasonsList.innerHTML = `
+                elements.seasonsList.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">📁</div>
                         <p>No se encontraron episodios</p>
@@ -522,55 +674,12 @@
                 return;
             }
 
-            seasons.forEach((season) => {
-                const seasonDiv = document.createElement('div');
-                seasonDiv.className = 'season';
-                
-                const seasonHeader = document.createElement('div');
-                seasonHeader.className = 'season-header';
-                seasonHeader.innerHTML = `
-                    <span class="season-name">${season.name}</span>
-                    <span class="season-toggle">▶</span>
-                `;
-                
-                const videosList = document.createElement('div');
-                videosList.className = 'videos-list';
-                
-                season.videos.forEach(video => {
-                    const progress = progressData[video.id] || 0;
-                    const isWatched = progress >= WATCHED_THRESHOLD;
-                    
-                    const videoItem = document.createElement('div');
-                    videoItem.className = `video-item ${isWatched ? 'watched' : ''}`;
-                    videoItem.innerHTML = `
-                        <div class="video-info">
-                            <div class="video-title" data-full-title="${video.fullName}">${video.title}</div>
-                            <div class="progress-bar-small">
-                                <div class="progress-fill-small ${isWatched ? 'watched' : ''}" 
-                                     style="width: ${progress * 100}%"></div>
-                            </div>
-                        </div>
-                        <div class="video-status">${isWatched ? '✓' : ''}</div>
-                    `;
-                    
-                    videoItem.onclick = () => playVideo(video);
-                    videosList.appendChild(videoItem);
-                });
-                
-                seasonHeader.onclick = () => {
-                    const toggle = seasonHeader.querySelector('.season-toggle');
-                    toggle.classList.toggle('open');
-                    videosList.classList.toggle('open');
-                };
-                
-                seasonDiv.appendChild(seasonHeader);
-                seasonDiv.appendChild(videosList);
-                seasonsList.appendChild(seasonDiv);
+            seasons.forEach(season => {
+                elements.seasonsList.appendChild(createSeasonElement(season));
             });
 
-            // Abrir primera temporada
-            const firstToggle = seasonsList.querySelector('.season-toggle');
-            const firstVideosList = seasonsList.querySelector('.videos-list');
+            const firstToggle = elements.seasonsList.querySelector('.season-toggle');
+            const firstVideosList = elements.seasonsList.querySelector('.videos-list');
             if (firstToggle && firstVideosList) {
                 firstToggle.classList.add('open');
                 firstVideosList.classList.add('open');
@@ -581,20 +690,13 @@
         async function playVideo(video) {
             currentVideo = video;
             
-            const player = document.getElementById('videoPlayer');
-            const playerTitle = document.getElementById('playerTitle');
-            const loadingMessage = document.getElementById('loadingMessage');
-            const markWatchedBtn = document.getElementById('markWatchedBtn');
-            
-            playerTitle.textContent = video.title;
-            loadingMessage.textContent = 'Cargando buffer inicial...';
-            loadingMessage.style.display = 'block';
-            player.style.display = 'none';
+            elements.playerTitle.textContent = video.title;
+            elements.loadingMessage.textContent = 'Cargando buffer inicial...';
+            elements.loadingMessage.style.display = 'block';
+            elements.videoPlayer.style.display = 'none';
             
             try {
-                // Usar URL de descarga directa de Google Drive
                 const downloadUrl = `https://www.googleapis.com/drive/v3/files/${video.fileId}?alt=media&key=${API_KEY}`;
-                
                 const response = await fetch(downloadUrl);
                 
                 if (!response.ok) {
@@ -609,69 +711,50 @@
                 const reader = response.body.getReader();
                 const chunks = [];
                 
-                // Buffer inicial: 5 MB para empezar a reproducir
-                const START_BUFFER = 5 * 1024 * 1024;
-                
                 while (true) {
                     const { done, value } = await reader.read();
                     
                     if (done) {
-                        // Descarga completa - actualizar con video completo
                         const blob = new Blob(chunks);
                         const videoUrl = URL.createObjectURL(blob);
-                        player.src = videoUrl;
-                        console.log('✅ Descarga completada - video completo disponible');
+                        elements.videoPlayer.src = videoUrl;
                         break;
                     }
                     
                     chunks.push(value);
                     loaded += value.length;
                     
-                    // Empezar a reproducir cuando tengamos suficiente buffer
                     if (!hasStartedPlaying && loaded >= START_BUFFER) {
                         hasStartedPlaying = true;
                         
-                        // Crear blob con lo descargado hasta ahora
                         const partialBlob = new Blob(chunks);
                         const videoUrl = URL.createObjectURL(partialBlob);
                         
-                        player.src = videoUrl;
-                        player.style.display = 'block';
-                        loadingMessage.style.display = 'none';
-                        markWatchedBtn.style.display = 'inline-block';
+                        elements.videoPlayer.src = videoUrl;
+                        elements.videoPlayer.style.display = 'block';
+                        elements.loadingMessage.style.display = 'none';
+                        elements.markWatchedBtn.style.display = 'inline-block';
                         
-                        // Restaurar progreso
                         const savedProgress = progressData[video.id] || 0;
                         if (savedProgress > 0 && savedProgress < WATCHED_THRESHOLD) {
-                            player.addEventListener('loadedmetadata', () => {
-                                player.currentTime = player.duration * savedProgress;
+                            elements.videoPlayer.addEventListener('loadedmetadata', () => {
+                                elements.videoPlayer.currentTime = elements.videoPlayer.duration * savedProgress;
                             }, { once: true });
                         }
                         
-                        player.play().catch(e => console.error('Error al reproducir:', e));
+                        elements.videoPlayer.play();
                         updateActiveVideoItem();
-                        
-                        console.log('🎬 Reproducción iniciada - descarga continúa en segundo plano');
-                    }
-                    
-                    // Si ya está reproduciendo, mostrar progreso silencioso en consola
-                    if (hasStartedPlaying) {
-                        const percent = Math.round((loaded / total) * 100);
-                        if (percent % 10 === 0) { // Log cada 10%
-                            console.log(`⬇️ Descargando en segundo plano: ${percent}%`);
-                        }
-                    } else {
-                        // Mostrar progreso inicial
+                        setSidebarVisibility(false);
+                    } else if (!hasStartedPlaying) {
                         const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
                         const mbNeeded = (START_BUFFER / (1024 * 1024)).toFixed(1);
-                        loadingMessage.textContent = `Cargando buffer: ${mbLoaded} / ${mbNeeded} MB`;
+                        elements.loadingMessage.textContent = `Cargando buffer: ${mbLoaded} / ${mbNeeded} MB`;
                     }
                 }
                 
             } catch (error) {
-                console.error('Error:', error);
-                loadingMessage.textContent = 'Error al cargar el video. Verifica la conexión.';
-                loadingMessage.style.display = 'block';
+                elements.loadingMessage.textContent = 'Error al cargar el video. Verifica la conexión.';
+                elements.loadingMessage.style.display = 'block';
             }
         }
         
@@ -679,7 +762,7 @@
             if (currentVideo) {
                 progressData[currentVideo.id] = 1.0;
                 saveProgress();
-                markAsWatched(currentVideo.id);
+                updateVideoItemUI(currentVideo, 1.0, true);
             }
         }
         window.markCurrentAsWatched = markCurrentAsWatched;
@@ -687,69 +770,126 @@
         function updateActiveVideoItem() {
             document.querySelectorAll('.video-item').forEach(item => {
                 item.classList.remove('active');
-                if (item.querySelector('.video-title').textContent === currentVideo.title) {
+                if (currentVideo && item.querySelector('.video-title').textContent === currentVideo.title) {
                     item.classList.add('active');
                 }
             });
         }
 
-        function updateVideoProgress(videoId, progress) {
+        function updateVideoItemUI(video, progress, markWatched = false) {
             document.querySelectorAll('.video-item').forEach(item => {
                 const titleElement = item.querySelector('.video-title');
-                const progressBar = item.querySelector('.progress-fill-small');
                 
                 if (currentVideo && titleElement.textContent === currentVideo.title) {
+                    const progressBar = item.querySelector('.progress-fill-small');
                     progressBar.style.width = `${progress * 100}%`;
+                    
+                    if (markWatched) {
+                        item.classList.add('watched');
+                        progressBar.classList.add('watched');
+                        item.querySelector('.video-status').textContent = '✓';
+                    }
                 }
             });
-        }
-
-        function markAsWatched(videoId) {
-            document.querySelectorAll('.video-item').forEach(item => {
-                const titleElement = item.querySelector('.video-title');
-                
-                if (currentVideo && titleElement.textContent === currentVideo.title) {
-                    item.classList.add('watched');
-                    item.querySelector('.progress-fill-small').classList.add('watched');
-                    item.querySelector('.video-status').textContent = '✓';
-                }
-            });
-            saveProgress();
         }
 
         // ==================== TRACKING DE PROGRESO ====================
-        const videoPlayer = document.getElementById('videoPlayer');
-        
-        videoPlayer.addEventListener('timeupdate', () => {
-            if (currentVideo && videoPlayer.duration > 0) {
-                const progress = videoPlayer.currentTime / videoPlayer.duration;
-                progressData[currentVideo.id] = progress;
-                
-                if (Math.floor(videoPlayer.currentTime) % 5 === 0) {
-                    saveProgress();
-                    updateVideoProgress(currentVideo.id, progress);
+        function setupProgressTracking() {
+            elements.videoPlayer.addEventListener('timeupdate', () => {
+                if (currentVideo && elements.videoPlayer.duration > 0) {
+                    const progress = elements.videoPlayer.currentTime / elements.videoPlayer.duration;
+                    progressData[currentVideo.id] = progress;
+                    
+                    if (Math.floor(elements.videoPlayer.currentTime) % 5 === 0) {
+                        saveProgress();
+                        updateVideoItemUI(currentVideo, progress);
+                    }
+                    
+                    if (progress >= WATCHED_THRESHOLD) {
+                        updateVideoItemUI(currentVideo, progress, true);
+                        saveProgress();
+                    }
                 }
-                
-                if (progress >= WATCHED_THRESHOLD) {
-                    markAsWatched(currentVideo.id);
-                }
-            }
-        });
+            });
 
-        window.addEventListener('beforeunload', () => {
-            if (currentVideo && videoPlayer.duration > 0) {
-                progressData[currentVideo.id] = videoPlayer.currentTime / videoPlayer.duration;
-                saveProgress();
+            window.addEventListener('beforeunload', () => {
+                if (currentVideo && elements.videoPlayer.duration > 0) {
+                    progressData[currentVideo.id] = elements.videoPlayer.currentTime / elements.videoPlayer.duration;
+                    saveProgress();
+                }
+            });
+        }
+
+        // ==================== SIDEBAR ====================
+        function toggleSidebar() {
+            const currentTransform = elements.sidebar.style.transform;
+            const isHidden = currentTransform === 'translateX(-100%)';
+            elements.sidebar.style.transform = isHidden ? 'translateX(0)' : 'translateX(-100%)';
+            
+            if (!window.sidebarPinned) {
+                if (isHidden) {
+                    elements.playerArea.classList.add('sidebar-visible');
+                } else {
+                    elements.playerArea.classList.remove('sidebar-visible');
+                }
             }
-        });
+        }
+        window.toggleSidebar = toggleSidebar;
+
+        function togglePin() {
+            window.sidebarPinned = !window.sidebarPinned;
+            
+            if (window.sidebarPinned) {
+                elements.sidebar.style.transform = 'translateX(0)';
+                elements.pinBtn.classList.add('pinned');
+                elements.pinBtn.textContent = '📍';
+                elements.pinBtn.title = 'Panel fijado - Click para desfijar';
+                elements.playerArea.classList.add('sidebar-visible');
+            } else {
+                elements.sidebar.style.transform = 'translateX(-100%)';
+                elements.pinBtn.classList.remove('pinned');
+                elements.pinBtn.textContent = '📌';
+                elements.pinBtn.title = 'Fijar panel';
+                elements.playerArea.classList.remove('sidebar-visible');
+            }
+        }
+        window.togglePin = togglePin;
+        
+        function setupSidebarHover() {
+            elements.toggleBtn.addEventListener('mouseenter', () => {
+                setSidebarVisibility(true);
+            });
+            
+            elements.sidebar.addEventListener('mouseenter', () => {
+                setSidebarVisibility(true);
+            });
+            
+            elements.sidebar.addEventListener('mouseleave', () => {
+                if (!window.sidebarPinned) {
+                    setTimeout(() => {
+                        if (!elements.sidebar.matches(':hover') && !elements.toggleBtn.matches(':hover')) {
+                            setSidebarVisibility(false);
+                        }
+                    }, 100);
+                }
+            });
+            
+            elements.toggleBtn.addEventListener('mouseleave', () => {
+                if (!window.sidebarPinned) {
+                    setTimeout(() => {
+                        if (!elements.sidebar.matches(':hover') && !elements.toggleBtn.matches(':hover')) {
+                            setSidebarVisibility(false);
+                        }
+                    }, 100);
+                }
+            });
+        }
 
         // ==================== PANTALLA COMPLETA ====================
         function toggleFullscreen() {
-            const playerArea = document.getElementById('playerArea');
-            
             if (!document.fullscreenElement) {
-                if (playerArea.requestFullscreen) {
-                    playerArea.requestFullscreen();
+                if (elements.playerArea.requestFullscreen) {
+                    elements.playerArea.requestFullscreen();
                 }
             } else {
                 if (document.exitFullscreen) {
@@ -757,10 +897,21 @@
                 }
             }
         }
+        window.toggleFullscreen = toggleFullscreen;
 
         // ==================== INICIALIZACIÓN ====================
-        loadProgress();
-        loadFilesFromDrive();  // Cargar archivos automáticamente desde Google Drive
+        function initialize() {
+            initializeElements();
+            loadProgress();
+            setupProgressTracking();
+            setupSidebarHover();
+            loadFilesFromDrive();
+            
+            window.sidebarPinned = false;
+            elements.sidebar.style.transform = 'translateX(-100%)';
+        }
+
+        initialize();
     </script>
 </body>
 </html>
