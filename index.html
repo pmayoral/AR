@@ -348,24 +348,16 @@
             position: relative;
         }
 
-        video {
-            max-width: 100%;
-            max-height: 100%;
+        iframe {
             width: 100%;
             height: 100%;
-            object-fit: contain;
+            border: none;
         }
 
         .loading-message {
             text-align: center;
             font-size: 16px;
             color: #64748b;
-        }
-
-        video::-webkit-media-controls-timeline {
-            background: linear-gradient(to right, 
-                #10b981 var(--buffered-progress, 0%), 
-                #2a2a2a var(--buffered-progress, 0%));
         }
 
         .empty-state {
@@ -431,7 +423,7 @@
                 <div class="loading-message" id="emptyMessage">
                     Selecciona un episodio para comenzar
                 </div>
-                <video id="videoPlayer" controls style="display: none;"></video>
+                <iframe id="videoPlayer" style="display: none;" allowfullscreen allow="autoplay"></iframe>
             </div>
         </div>
         
@@ -852,105 +844,42 @@
             }
             
             if (currentVideo && currentVideo.id === video.id) {
-                elements.videoPlayer.currentTime = 0;
+                playVideo(video);
             }
         }
 
         // ==================== REPRODUCCIÓN ====================
-        function getCurrentProgress() {
-            if (!currentVideo || !elements.videoPlayer.duration) return null;
-            
-            return {
-                videoId: currentVideo.id,
-                currentTime: elements.videoPlayer.currentTime,
-                duration: elements.videoPlayer.duration
-            };
-        }
-
-        function saveCurrentProgress() {
-            const progressInfo = getCurrentProgress();
-            if (progressInfo) {
-                saveVideoProgress(progressInfo.videoId, progressInfo.currentTime, progressInfo.duration);
-            }
-        }
 
         function playVideo(video) {
-            saveCurrentProgress();
-            
             currentVideo = video;
-            videoFullyLoaded = false;
+            videoFullyLoaded = true;
             
             elements.playerTitle.textContent = video.title;
             elements.emptyMessage.style.display = 'none';
             
-            try {
-                const videoUrl = `https://www.googleapis.com/drive/v3/files/${video.fileId}?alt=media&key=${API_KEY}`;
-                
-                elements.videoPlayer.src = videoUrl;
-                elements.videoPlayer.style.display = 'block';
-                elements.markWatchedBtn.style.display = 'inline-block';
-                
-                const { currentTime, duration, progress } = getVideoProgress(video.id);
-                
-                if (currentTime > 0 && progress < WATCHED_THRESHOLD) {
-                    elements.videoPlayer.addEventListener('loadedmetadata', () => {
-                        elements.videoPlayer.currentTime = currentTime;
-                        videoFullyLoaded = true;
-                        elements.videoPlayer.play().catch(() => {});
-                    }, { once: true });
-                } else {
-                    elements.videoPlayer.addEventListener('loadedmetadata', () => {
-                        videoFullyLoaded = true;
-                    }, { once: true });
-                    elements.videoPlayer.play().catch(() => {});
-                }
-                
-                updateActiveVideoItem();
-                setSidebarVisibility(false);
-                
-            } catch (error) {
-                elements.emptyMessage.style.display = 'block';
-                elements.emptyMessage.textContent = 'Error al cargar el video. Verifica la conexión.';
-            }
+            const iframeUrl = `https://drive.google.com/file/d/${video.fileId}/preview`;
+            
+            elements.videoPlayer.src = iframeUrl;
+            elements.videoPlayer.style.display = 'block';
+            elements.markWatchedBtn.style.display = 'inline-block';
+            
+            updateActiveVideoItem();
+            setSidebarVisibility(false);
         }
         
         function markCurrentAsWatched() {
-            if (currentVideo && elements.videoPlayer.duration > 0) {
-                saveVideoProgress(currentVideo.id, elements.videoPlayer.duration, elements.videoPlayer.duration);
-                updateVideoItemUI(currentVideo, elements.videoPlayer.duration, elements.videoPlayer.duration, true);
+            if (currentVideo) {
+                const videoData = getVideoProgress(currentVideo.id);
+                const duration = currentVideo.videoDuration || videoData.duration || 3600;
+                saveVideoProgress(currentVideo.id, duration, duration);
+                updateVideoItemUI(currentVideo, duration, duration, true);
             }
         }
         window.markCurrentAsWatched = markCurrentAsWatched;
 
         // ==================== TRACKING DE PROGRESO ====================
         function setupProgressTracking() {
-            elements.videoPlayer.addEventListener('timeupdate', () => {
-                const progressInfo = getCurrentProgress();
-                if (!progressInfo) return;
-
-                const progress = progressInfo.currentTime / progressInfo.duration;
-                
-                if (Math.floor(elements.videoPlayer.currentTime) % 5 === 0) {
-                    saveVideoProgress(progressInfo.videoId, progressInfo.currentTime, progressInfo.duration);
-                    updateVideoItemUI(currentVideo, progressInfo.currentTime, progressInfo.duration);
-                }
-                
-                if (progress >= WATCHED_THRESHOLD) {
-                    saveVideoProgress(progressInfo.videoId, progressInfo.currentTime, progressInfo.duration);
-                    updateVideoItemUI(currentVideo, progressInfo.currentTime, progressInfo.duration, true);
-                }
-            });
-
-            elements.videoPlayer.addEventListener('pause', saveCurrentProgress);
-            
-            elements.videoPlayer.addEventListener('ended', () => {
-                if (currentVideo && elements.videoPlayer.duration > 0) {
-                    saveVideoProgress(currentVideo.id, elements.videoPlayer.duration, elements.videoPlayer.duration);
-                    updateVideoItemUI(currentVideo, elements.videoPlayer.duration, elements.videoPlayer.duration, true);
-                }
-            });
-
-            window.addEventListener('beforeunload', saveCurrentProgress);
+            // Con iframe no hay tracking automático, solo botón manual "Marcar visto"
         }
 
         // ==================== SIDEBAR ====================
