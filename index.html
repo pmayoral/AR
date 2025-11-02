@@ -179,34 +179,13 @@
         .video-title {
             font-size: 14px;
             margin-bottom: 6px;
-            white-space: nowrap;
+            line-height: 1.4;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            line-clamp: 3;
+            -webkit-box-orient: vertical;
             overflow: hidden;
-            text-overflow: ellipsis;
-            cursor: pointer;
-        }
-
-        @media (hover: hover) and (pointer: fine) {
-            .video-item:hover .video-title::before {
-                content: attr(data-full-title);
-                position: fixed;
-                left: 50%;
-                top: 50%;
-                transform: translate(-50%, -50%);
-                background: #667eea;
-                color: #ffffff;
-                padding: 12px 20px;
-                border-radius: 8px;
-                white-space: normal;
-                max-width: 400px;
-                z-index: 10000;
-                font-size: 15px;
-                font-weight: 500;
-                box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
-                border: 2px solid #764ba2;
-                text-align: center;
-                line-height: 1.4;
-                pointer-events: none;
-            }
+            word-break: break-word;
         }
 
         .progress-bar-small {
@@ -326,7 +305,7 @@
             transition: all 0.3s;
             font-weight: bold;
             box-shadow: 2px 0 15px rgba(102, 126, 234, 0.5);
-            z-index: 1002;
+            z-index: 1001;
         }
 
         .toggle-sidebar-btn:hover {
@@ -389,22 +368,6 @@
                 #2a2a2a var(--buffered-progress, 0%));
         }
 
-        .loading-text {
-            position: absolute;
-            bottom: 80px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: rgba(0, 0, 0, 0.85);
-            color: #10b981;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 12px;
-            z-index: 101;
-            white-space: nowrap;
-            font-weight: 500;
-            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
-        }
-
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -433,67 +396,6 @@
             
             .player-area.sidebar-visible {
                 margin-left: 0;
-            }
-            
-            .video-title {
-                white-space: normal;
-                overflow: visible;
-            }
-        }
-        
-        @media (max-width: 1024px) {
-            .sidebar {
-                width: 320px;
-            }
-            
-            .fullscreen-btn, .mark-watched-btn {
-                padding: 12px 16px;
-                font-size: 15px;
-                min-height: 44px;
-            }
-            
-            .video-item {
-                padding: 16px;
-                min-height: 60px;
-            }
-            
-            .season-header {
-                padding: 16px;
-                min-height: 50px;
-            }
-        }
-        
-        /* Mejoras para dispositivos táctiles */
-        @media (hover: none) and (pointer: coarse) {
-            .video-item:hover {
-                transform: none;
-            }
-            
-            .season-header:hover {
-                transform: none;
-            }
-            
-            .restart-btn {
-                opacity: 1;
-            }
-            
-            .toggle-sidebar-btn {
-                padding: 18px 14px;
-                min-width: 50px;
-                min-height: 60px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            
-            /* Evitar el rebote de scroll en iOS */
-            body {
-                overflow: hidden;
-                -webkit-overflow-scrolling: touch;
-            }
-            
-            .sidebar {
-                -webkit-overflow-scrolling: touch;
             }
         }
     </style>
@@ -529,8 +431,7 @@
                 <div class="loading-message" id="emptyMessage">
                     Selecciona un episodio para comenzar
                 </div>
-                <video id="videoPlayer" controls playsinline webkit-playsinline style="display: none;"></video>
-                <div class="loading-text" id="loadingText" style="display: none;">Cargando: 0.0 MB</div>
+                <video id="videoPlayer" controls style="display: none;"></video>
             </div>
         </div>
         
@@ -547,9 +448,11 @@
         // ==================== VARIABLES GLOBALES ====================
         let currentVideo = null;
         let progressData = {};
+        let sidebarPinned = false;
+        let videoFullyLoaded = false;
+        
         const WATCHED_THRESHOLD = 0.95;
         const STORAGE_KEY = 'agatha_raisin_progress';
-        const START_BUFFER = 5 * 1024 * 1024;
         const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.webm', '.mov', '.m4v'];
 
         // ==================== CACHE DE ELEMENTOS DOM ====================
@@ -560,7 +463,6 @@
             statusText: null,
             seasonsList: null,
             playerTitle: null,
-            loadingText: null,
             emptyMessage: null,
             markWatchedBtn: null,
             pinBtn: null,
@@ -574,7 +476,6 @@
             elements.statusText = document.getElementById('statusText');
             elements.seasonsList = document.getElementById('seasonsList');
             elements.playerTitle = document.getElementById('playerTitle');
-            elements.loadingText = document.getElementById('loadingText');
             elements.emptyMessage = document.getElementById('emptyMessage');
             elements.markWatchedBtn = document.getElementById('markWatchedBtn');
             elements.pinBtn = document.getElementById('pinBtn');
@@ -583,7 +484,7 @@
 
         // ==================== UTILIDADES ====================
         function setSidebarVisibility(visible) {
-            if (!window.sidebarPinned) {
+            if (!sidebarPinned) {
                 elements.sidebar.style.transform = visible ? 'translateX(0)' : 'translateX(-100%)';
                 elements.playerArea.classList.toggle('sidebar-visible', visible);
             }
@@ -627,7 +528,7 @@
             try {
                 updateStatus('Cargando archivos...');
                 
-                const url = `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents&key=${API_KEY}&fields=files(id,name,mimeType)`;
+                const url = `https://www.googleapis.com/drive/v3/files?q='${FOLDER_ID}'+in+parents&key=${API_KEY}&fields=files(id,name,mimeType,videoMediaMetadata)`;
                 const response = await fetch(url);
                 
                 if (!response.ok) {
@@ -647,7 +548,8 @@
                     })
                     .map(file => ({
                         id: file.id,
-                        name: file.name
+                        name: file.name,
+                        duration: file.videoMediaMetadata?.durationMillis ? parseInt(file.videoMediaMetadata.durationMillis) / 1000 : 0
                     }));
                 
                 updateStatus(`${DRIVE_FILES.length} episodios`);
@@ -693,7 +595,7 @@
             try {
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(progressData));
             } catch (e) {
-                // Error silencioso
+                // Almacenamiento no disponible o lleno
             }
         }
 
@@ -702,7 +604,7 @@
             const currentTime = videoProgress?.currentTime || 0;
             let duration = videoProgress?.duration || 0;
             
-            if (currentVideo && currentVideo.id === videoId && elements.videoPlayer.duration > 0 && window.videoFullyLoaded) {
+            if (currentVideo && currentVideo.id === videoId && elements.videoPlayer.duration > 0 && videoFullyLoaded) {
                 duration = elements.videoPlayer.duration;
                 if (videoProgress && duration !== videoProgress.duration) {
                     saveVideoProgress(videoId, currentTime, duration);
@@ -717,18 +619,14 @@
         }
 
         function saveVideoProgress(videoId, currentTime, duration) {
-            if (!window.videoFullyLoaded) {
+            if (!videoFullyLoaded) {
                 const existing = progressData[videoId];
-                if (existing && existing.duration > 0) {
-                    progressData[videoId] = { currentTime, duration: existing.duration };
-                } else {
-                    progressData[videoId] = { currentTime, duration: 0 };
-                }
-                saveProgress();
+                const savedDuration = (existing && existing.duration > 0) ? existing.duration : 0;
+                progressData[videoId] = { currentTime, duration: savedDuration };
             } else if (duration > 0) {
                 progressData[videoId] = { currentTime, duration };
-                saveProgress();
             }
+            saveProgress();
         }
 
         // ==================== PARSEO Y ORGANIZACIÓN ====================
@@ -766,7 +664,8 @@
                     fullName: parsed.originalName,
                     episode: parsed.episode,
                     fileId: file.id,
-                    url: `https://drive.google.com/file/d/${file.id}/preview?quality=high`
+                    url: `https://drive.google.com/file/d/${file.id}/preview?quality=high`,
+                    videoDuration: file.duration || 0
                 });
             });
             
@@ -780,46 +679,56 @@
         }
 
         // ==================== UI - CREACIÓN DE ELEMENTOS ====================
-        function buildVideoTooltip(video, currentTime, duration) {
-            let tooltipText = video.fullName;
-            const progress = duration > 0 ? currentTime / duration : 0;
+        function buildVideoTitle(video, currentTime) {
+            const totalDuration = video.videoDuration || 0;
             
-            if (progress >= WATCHED_THRESHOLD) {
-                tooltipText = `${video.fullName} (completado)`;
-            } else if (currentTime > 0 && duration > 0) {
-                tooltipText = `${video.fullName} (en ${formatTime(currentTime)})`;
+            if (totalDuration === 0) {
+                return video.fullName;
             }
             
-            return tooltipText;
+            if (currentTime > 0) {
+                return `${video.fullName} (min. ${formatTime(currentTime)} de ${formatTime(totalDuration)})`;
+            }
+            
+            return `${video.fullName} (${formatTime(totalDuration)})`;
+        }
+
+        function createRestartButton(video, videoItem) {
+            const restartBtn = document.createElement('button');
+            restartBtn.className = 'restart-btn';
+            restartBtn.title = 'Ver desde el principio';
+            restartBtn.textContent = '🔄';
+            restartBtn.onclick = (e) => {
+                e.stopPropagation();
+                restartVideo(video, videoItem);
+            };
+            return restartBtn;
         }
 
         function createVideoItem(video) {
             const { currentTime, duration, progress } = getVideoProgress(video.id);
             const isWatched = progress >= WATCHED_THRESHOLD;
-            const tooltipText = buildVideoTooltip(video, currentTime, duration);
+            const displayTitle = buildVideoTitle(video, currentTime);
             
             const videoItem = document.createElement('div');
             videoItem.className = `video-item ${isWatched ? 'watched' : ''}`;
+            videoItem.setAttribute('data-video-id', video.id);
             videoItem.innerHTML = `
                 <div class="video-info">
-                    <div class="video-title" data-full-title="${tooltipText}">${video.title}</div>
+                    <div class="video-title">${displayTitle}</div>
                     <div class="progress-bar-small">
                         <div class="progress-fill-small ${isWatched ? 'watched' : ''}" 
                              style="width: ${progress * 100}%"></div>
                     </div>
                 </div>
                 <div style="display: flex; align-items: center;">
-                    ${currentTime > 0 ? '<button class="restart-btn" title="Ver desde el principio">🔄</button>' : ''}
                     <div class="video-status">${isWatched ? '✓' : ''}</div>
                 </div>
             `;
             
-            const restartBtn = videoItem.querySelector('.restart-btn');
-            if (restartBtn) {
-                restartBtn.onclick = (e) => {
-                    e.stopPropagation();
-                    restartVideo(video, videoItem);
-                };
+            if (currentTime > 0) {
+                const statusContainer = videoItem.querySelector('.video-status').parentElement;
+                statusContainer.insertBefore(createRestartButton(video, videoItem), statusContainer.firstChild);
             }
             
             videoItem.onclick = () => playVideo(video);
@@ -887,7 +796,7 @@
         function updateActiveVideoItem() {
             document.querySelectorAll('.video-item').forEach(item => {
                 item.classList.remove('active');
-                if (currentVideo && item.querySelector('.video-title').textContent === currentVideo.title) {
+                if (currentVideo && item.getAttribute('data-video-id') === currentVideo.id) {
                     item.classList.add('active');
                 }
             });
@@ -897,16 +806,14 @@
             const progress = duration > 0 ? currentTime / duration : 0;
             
             document.querySelectorAll('.video-item').forEach(item => {
-                const titleElement = item.querySelector('.video-title');
-                
-                if (currentVideo && titleElement.textContent === currentVideo.title) {
+                if (currentVideo && item.getAttribute('data-video-id') === currentVideo.id) {
+                    const titleElement = item.querySelector('.video-title');
                     const progressBar = item.querySelector('.progress-fill-small');
+                    
                     progressBar.style.width = `${progress * 100}%`;
                     
-                    if (duration > 0) {
-                        const tooltipText = buildVideoTooltip(video, currentTime, duration);
-                        titleElement.setAttribute('data-full-title', tooltipText);
-                    }
+                    const newTitle = buildVideoTitle(video, currentTime);
+                    titleElement.textContent = newTitle;
                     
                     if (markWatched) {
                         item.classList.add('watched');
@@ -918,15 +825,7 @@
                     const existingRestartBtn = statusContainer.querySelector('.restart-btn');
                     
                     if (currentTime > 0 && !existingRestartBtn) {
-                        const restartBtn = document.createElement('button');
-                        restartBtn.className = 'restart-btn';
-                        restartBtn.title = 'Ver desde el principio';
-                        restartBtn.textContent = '🔄';
-                        restartBtn.onclick = (e) => {
-                            e.stopPropagation();
-                            restartVideo(currentVideo, item);
-                        };
-                        statusContainer.insertBefore(restartBtn, statusContainer.firstChild);
+                        statusContainer.insertBefore(createRestartButton(currentVideo, item), statusContainer.firstChild);
                     }
                 }
             });
@@ -945,7 +844,7 @@
             videoItem.querySelector('.video-status').textContent = '';
             
             const titleElement = videoItem.querySelector('.video-title');
-            titleElement.setAttribute('data-full-title', video.fullName);
+            titleElement.textContent = buildVideoTitle(video, 0);
             
             const restartBtn = videoItem.querySelector('.restart-btn');
             if (restartBtn) {
@@ -975,85 +874,41 @@
             }
         }
 
-        function restoreSavedProgress(video) {
-            const { currentTime, duration, progress } = getVideoProgress(video.id);
-            
-            if (currentTime > 0 && progress < WATCHED_THRESHOLD) {
-                elements.videoPlayer.addEventListener('loadedmetadata', () => {
-                    elements.videoPlayer.currentTime = currentTime;
-                }, { once: true });
-            }
-        }
-
-        async function playVideo(video) {
+        function playVideo(video) {
             saveCurrentProgress();
             
             currentVideo = video;
-            window.videoFullyLoaded = false;
+            videoFullyLoaded = false;
             
             elements.playerTitle.textContent = video.title;
             elements.emptyMessage.style.display = 'none';
-            elements.videoPlayer.style.display = 'none';
-            elements.loadingText.style.display = 'block';
-            elements.loadingText.textContent = 'Descargando: 0%';
             
             try {
-                const downloadUrl = `https://www.googleapis.com/drive/v3/files/${video.fileId}?alt=media&key=${API_KEY}`;
-                const response = await fetch(downloadUrl);
-                
-                if (!response.ok) {
-                    throw new Error('Error al descargar el video');
-                }
-                
-                const contentLength = response.headers.get('content-length');
-                const total = parseInt(contentLength, 10);
-                let loaded = 0;
-                
-                const reader = response.body.getReader();
-                const chunks = [];
-                
-                while (true) {
-                    const { done, value } = await reader.read();
-                    
-                    if (done) {
-                        break;
-                    }
-                    
-                    chunks.push(value);
-                    loaded += value.length;
-                    
-                    const percent = Math.floor((loaded / total) * 100);
-                    const mbLoaded = (loaded / (1024 * 1024)).toFixed(1);
-                    const mbTotal = (total / (1024 * 1024)).toFixed(1);
-                    
-                    elements.loadingText.textContent = `Descargando: ${percent}% (${mbLoaded} / ${mbTotal} MB)`;
-                }
-                
-                const blob = new Blob(chunks);
-                const videoUrl = URL.createObjectURL(blob);
+                const videoUrl = `https://www.googleapis.com/drive/v3/files/${video.fileId}?alt=media&key=${API_KEY}`;
                 
                 elements.videoPlayer.src = videoUrl;
                 elements.videoPlayer.style.display = 'block';
                 elements.markWatchedBtn.style.display = 'inline-block';
-                elements.loadingText.style.display = 'none';
                 
-                window.videoFullyLoaded = true;
+                const { currentTime, duration, progress } = getVideoProgress(video.id);
                 
-                restoreSavedProgress(video);
-                elements.videoPlayer.play();
-                updateActiveVideoItem();
-                
-                // En dispositivos táctiles, cerrar el sidebar al reproducir
-                const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-                if (isTouchDevice && !window.sidebarPinned) {
-                    elements.sidebar.style.transform = 'translateX(-100%)';
-                    elements.playerArea.classList.remove('sidebar-visible');
+                if (currentTime > 0 && progress < WATCHED_THRESHOLD) {
+                    elements.videoPlayer.addEventListener('loadedmetadata', () => {
+                        elements.videoPlayer.currentTime = currentTime;
+                        videoFullyLoaded = true;
+                        elements.videoPlayer.play().catch(() => {});
+                    }, { once: true });
                 } else {
-                    setSidebarVisibility(false);
+                    elements.videoPlayer.addEventListener('loadedmetadata', () => {
+                        videoFullyLoaded = true;
+                    }, { once: true });
+                    elements.videoPlayer.play().catch(() => {});
                 }
                 
+                updateActiveVideoItem();
+                setSidebarVisibility(false);
+                
             } catch (error) {
-                elements.loadingText.style.display = 'none';
                 elements.emptyMessage.style.display = 'block';
                 elements.emptyMessage.textContent = 'Error al cargar el video. Verifica la conexión.';
             }
@@ -1101,19 +956,19 @@
         // ==================== SIDEBAR ====================
         function toggleSidebar() {
             const currentTransform = elements.sidebar.style.transform;
-            const isHidden = currentTransform === 'translateX(-100%)' || currentTransform === '';
+            const isHidden = currentTransform === 'translateX(-100%)';
             elements.sidebar.style.transform = isHidden ? 'translateX(0)' : 'translateX(-100%)';
             
-            if (!window.sidebarPinned) {
+            if (!sidebarPinned) {
                 elements.playerArea.classList.toggle('sidebar-visible', isHidden);
             }
         }
         window.toggleSidebar = toggleSidebar;
 
-        function togglePin() {
-            window.sidebarPinned = !window.sidebarPinned;
+        function updateSidebarPinState(pinned) {
+            sidebarPinned = pinned;
             
-            if (window.sidebarPinned) {
+            if (pinned) {
                 elements.sidebar.style.transform = 'translateX(0)';
                 elements.pinBtn.classList.add('pinned');
                 elements.pinBtn.textContent = '📍';
@@ -1127,16 +982,16 @@
                 elements.playerArea.classList.remove('sidebar-visible');
             }
         }
+
+        function togglePin() {
+            updateSidebarPinState(!sidebarPinned);
+        }
         window.togglePin = togglePin;
         
         function setupSidebarHover() {
-            // Solo activar hover en dispositivos no táctiles
-            const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-            if (isTouchDevice) return;
-            
             const showSidebar = () => setSidebarVisibility(true);
             const hideSidebarDelayed = () => {
-                if (!window.sidebarPinned) {
+                if (!sidebarPinned) {
                     setTimeout(() => {
                         if (!elements.sidebar.matches(':hover') && !elements.toggleBtn.matches(':hover')) {
                             setSidebarVisibility(false);
@@ -1153,25 +1008,13 @@
 
         // ==================== PANTALLA COMPLETA ====================
         function toggleFullscreen() {
-            const elem = elements.videoPlayer;
-            
-            if (!document.fullscreenElement && !document.webkitFullscreenElement) {
-                // Intentar diferentes APIs de pantalla completa
-                if (elem.requestFullscreen) {
-                    elem.requestFullscreen();
-                } else if (elem.webkitRequestFullscreen) {
-                    elem.webkitRequestFullscreen();
-                } else if (elem.webkitEnterFullscreen) {
-                    // Específico para iOS
-                    elem.webkitEnterFullscreen();
-                } else if (elements.playerArea.requestFullscreen) {
+            if (!document.fullscreenElement) {
+                if (elements.playerArea.requestFullscreen) {
                     elements.playerArea.requestFullscreen();
                 }
             } else {
                 if (document.exitFullscreen) {
                     document.exitFullscreen();
-                } else if (document.webkitExitFullscreen) {
-                    document.webkitExitFullscreen();
                 }
             }
         }
@@ -1185,16 +1028,9 @@
             setupSidebarHover();
             loadFilesFromDrive();
             
-            window.sidebarPinned = false;
-            window.videoFullyLoaded = false;
-            
-            // En dispositivos táctiles, mostrar el sidebar inicialmente
-            const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
-            if (isTouchDevice) {
-                elements.sidebar.style.transform = 'translateX(0)';
-            } else {
-                elements.sidebar.style.transform = 'translateX(-100%)';
-            }
+            sidebarPinned = false;
+            videoFullyLoaded = false;
+            elements.sidebar.style.transform = 'translateX(-100%)';
         }
 
         initialize();
